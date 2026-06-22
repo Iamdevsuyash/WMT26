@@ -1,0 +1,116 @@
+import json
+import random
+import torch
+from tqdm import tqdm
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from sacrebleu.metrics import BLEU, CHRF
+
+# -------------------------
+# CONFIG
+# -------------------------
+JSONL_FILE = "as_mni_finetune\data\processed\combined_val.jsonl"
+SAMPLE_SIZE = 200
+
+MODEL_NAME = "facebook/nllb-200-distilled-1.3B"
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# -------------------------
+# LOAD MIZO EXAMPLES
+# -------------------------
+records = []
+
+with open(JSONL_FILE, encoding="utf-8") as f:
+    for line in f:
+        r = json.loads(line)
+
+        if (
+            r["src_lang"] == "eng_Latn"
+            and r["tgt_lang"] == "lus_Latn"
+        ):
+            records.append(r)
+
+print("Total Mizo examples:", len(records))
+
+random.seed(42)
+random.shuffle(records)
+
+records = records[:min(SAMPLE_SIZE, len(records))]
+
+sources = [r["src"] for r in records]
+refs    = [r["tgt"] for r in records]
+
+# -------------------------
+# LOAD NLLB
+# -------------------------
+tokenizer = AutoTokenizer.from_pretrained(
+    MODEL_NAME,
+    src_lang="eng_Latn"
+)
+
+model = AutoModelForSeq2SeqLM.from_pretrained(
+    MODEL_NAME
+).to(DEVICE)
+
+forced_bos_token_id = tokenizer.convert_tokens_to_ids("lus_Latn")
+
+# -------------------------
+# INFERENCE
+# -------------------------
+preds = []
+
+BATCH_SIZE = 16
+
+for i in tqdm(range(0, len(sources), BATCH_SIZE)):
+
+    batch = sources[i:i+BATCH_SIZE]
+
+    inputs = tokenizer(
+        batch,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=256,
+    ).to(DEVICE)
+
+    outputs = model.generate(
+        **inputs,
+        forced_bos_token_id=forced_bos_token_id,
+        max_new_tokens=256,
+        num_beams=4,
+        no_repeat_ngram_size=3,
+        repetition_penalty=1.2,
+    )
+
+    batch_preds = tokenizer.batch_decode(
+        outputs,
+        skip_special_tokens=True,
+    )
+
+    preds.extend(batch_preds)
+
+# -------------------------
+# METRICS
+# -------------------------
+bleu = BLEU()
+chrf = CHRF()
+
+print("\n===== NLLB MIZO =====")
+
+print(
+    "BLEU:",
+    bleu.corpus_score(preds, [refs]).score
+)
+
+print(
+    "chrF:",
+    chrf.corpus_score(preds, [refs]).score
+)
+
+# -------------------------
+# SAMPLES
+# -------------------------
+for i in range(min(10, len(preds))):
+    print("\nSRC :", sources[i])
+    print("REF :", refs[i])
+    print("PRED:", preds[i])

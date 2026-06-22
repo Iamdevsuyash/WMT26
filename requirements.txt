@@ -1,0 +1,16 @@
+torch
+torchvision
+torchaudio
+transformers
+datasets
+accelerate
+evaluate
+peft
+sentencepiece
+sacrebleu
+tensorboard
+numpy
+pandas
+scikit-learn
+matplotlib
+bitsandbytes
